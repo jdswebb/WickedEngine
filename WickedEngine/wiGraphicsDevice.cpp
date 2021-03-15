@@ -1,5 +1,6 @@
 #include "wiGraphicsDevice.h"
 #include "wiEvent.h"
+#include "wiRenderer.h"
 
 using namespace wiGraphics;
 
@@ -165,4 +166,29 @@ float GraphicsDevice::GetScreenWidth() const
 float GraphicsDevice::GetScreenHeight() const
 {
 	return (float)GetResolutionHeight() / GetDPIScaling();
+}
+
+bool wiGraphics::GraphicsDevice::GetVSyncEnabled() const
+{
+    return wiRenderer::GetSwapChain()->GetVSyncEnabled();
+}
+
+void wiGraphics::GraphicsDevice::SetResolution(int width, int height)
+{
+	SetResolution(wiRenderer::GetSwapChain(), width, height);
+}
+
+void wiGraphics::GraphicsDevice::SetVSyncEnabled(bool value)
+{
+	wiRenderer::GetSwapChain()->SetVSyncEnabled(value);
+}
+
+int wiGraphics::GraphicsDevice::GetResolutionWidth() const
+{
+	return wiRenderer::GetSwapChain()->GetResolutionWidth();
+}
+
+int wiGraphics::GraphicsDevice::GetResolutionHeight() const
+{
+	return wiRenderer::GetSwapChain()->GetResolutionHeight();
 }

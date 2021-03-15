@@ -11,17 +11,13 @@ namespace wiGraphics
 	static const CommandList COMMANDLIST_COUNT = 32;
 	static const CommandList INVALID_COMMANDLIST = COMMANDLIST_COUNT;
 
+	static const uint32_t BACKBUFFER_COUNT = 2;
+
 	class GraphicsDevice
 	{
 	protected:
 		uint64_t FRAMECOUNT = 0;
-		bool VSYNC = true;
-		int RESOLUTIONWIDTH = 0;
-		int RESOLUTIONHEIGHT = 0;
 		bool DEBUGDEVICE = false;
-		bool FULLSCREEN = false;
-		FORMAT BACKBUFFER_FORMAT = FORMAT_R10G10B10A2_UNORM;
-		static const uint32_t BACKBUFFER_COUNT = 2;
 		uint32_t capabilities = 0;
 		size_t SHADER_IDENTIFIER_SIZE = 0;
 		size_t TOPLEVEL_ACCELERATION_STRUCTURE_INSTANCE_SIZE = 0;
@@ -32,7 +28,10 @@ namespace wiGraphics
 		wiEvent::Handle dpi_change_event = wiEvent::Subscribe(SYSTEM_EVENT_CHANGE_DPI, [this](uint64_t userdata) { dpi = int(userdata & 0xFFFF); });
 
 	public:
-		virtual bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const = 0;
+        virtual ~GraphicsDevice() {}
+
+        virtual bool CreateSwapChain(const SwapChainDesc* pDesc, SwapChain* pSwapChain) const = 0;		
+        virtual bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const = 0;
 		virtual bool CreateTexture(const TextureDesc* pDesc, const SubresourceData *pInitialData, Texture *pTexture) const = 0;
 		virtual bool CreateShader(SHADERSTAGE stage, const void *pShaderBytecode, size_t BytecodeLength, Shader *pShader) const = 0;
 		virtual bool CreateSampler(const SamplerDesc *pSamplerDesc, Sampler *pSamplerState) const = 0;
@@ -60,8 +59,9 @@ namespace wiGraphics
 
 		virtual void SetName(GPUResource* pResource, const char* name) = 0;
 
-		virtual void PresentBegin(CommandList cmd) = 0;
-		virtual void PresentEnd(CommandList cmd) = 0;
+		virtual void PresentBegin(SwapChain* pSwapChain, CommandList cmd) = 0;
+		virtual void PresentEnd(SwapChain* pSwapChain, CommandList cmd) = 0;
+		virtual void EndFrame() = 0;
 
 		// Begin a new command list for GPU command recording.
 		//	This will be valid until SubmitCommandLists() or StashCommandLists() is called.
@@ -76,15 +76,13 @@ namespace wiGraphics
 		virtual void WaitForGPU() = 0;
 		virtual void ClearPipelineStateCache() {};
 
-		inline bool GetVSyncEnabled() const { return VSYNC; }
-		virtual void SetVSyncEnabled(bool value) { VSYNC = value; }
-		inline uint64_t GetFrameCount() const { return FRAMECOUNT; }
-		inline uint64_t GetFrameIndex() const { return FRAMECOUNT % BACKBUFFER_COUNT; }
+		bool GetVSyncEnabled() const;
+		void SetVSyncEnabled(bool value);
 
 		// Returns native resolution width of back buffer in pixels:
-		inline int GetResolutionWidth() const { return RESOLUTIONWIDTH; }
+		int GetResolutionWidth() const;
 		// Returns native resolution height of back buffer in pixels:
-		inline int GetResolutionHeight() const { return RESOLUTIONHEIGHT; }
+		int GetResolutionHeight() const;
 
 		constexpr int GetDPI() const { return dpi; }
 		constexpr float GetDPIScaling() const { return (float)GetDPI() / 96.f; }
@@ -94,10 +92,15 @@ namespace wiGraphics
 		// Returns the height of the screen with DPI scaling applied (subpixel size):
 		float GetScreenHeight() const;
 
+		void SetResolution(int width, int height);
 
-		virtual void SetResolution(int width, int height) = 0;
+		inline XMMATRIX GetScreenProjection() const
+		{
+			return XMMatrixOrthographicOffCenterLH(0, (float)GetScreenWidth(), (float)GetScreenHeight(), 0, -1, 1);
+		}
 
-		virtual Texture GetBackBuffer() = 0;
+		inline uint64_t GetFrameCount() const { return FRAMECOUNT; }
+		inline uint64_t GetFrameIndex() const { return FRAMECOUNT % BACKBUFFER_COUNT; }
 
 		inline bool CheckCapability(GRAPHICSDEVICE_CAPABILITY capability) const { return capabilities & capability; }
 
@@ -106,11 +109,8 @@ namespace wiGraphics
 		bool IsFormatBlockCompressed(FORMAT value) const;
 		bool IsFormatStencilSupport(FORMAT value) const;
 
-		inline XMMATRIX GetScreenProjection() const
-		{
-			return XMMatrixOrthographicOffCenterLH(0, (float)GetScreenWidth(), (float)GetScreenHeight(), 0, -1, 1);
-		}
-		inline FORMAT GetBackBufferFormat() const { return BACKBUFFER_FORMAT; }
+		virtual void SetResolution(SwapChain* swapChain, int width, int height) = 0;
+		virtual void SetVSyncEnabled(SwapChain* pSwapChain, bool value) = 0;
 		static constexpr uint32_t GetBackBufferCount() { return BACKBUFFER_COUNT; }
 
 		inline bool IsDebugDevice() const { return DEBUGDEVICE; }

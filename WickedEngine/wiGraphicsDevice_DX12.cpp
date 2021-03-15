@@ -5,9 +5,6 @@
 #include "wiGraphicsDevice_SharedInternals.h"
 #include "wiHelper.h"
 #include "wiMath.h"
-#include "ResourceMapping.h"
-#include "wiBackLog.h"
-#include "wiStartupArguments.h"
 
 #include "Utility/dx12/d3dx12.h"
 #include "Utility/D3D12MemAlloc.h"
@@ -27,6 +24,7 @@
 #include <sstream>
 #include <algorithm>
 #include <wincodec.h>
+#include "wiRenderer.h"
 
 // Bindless allocation limits:
 #define BINDLESS_RESOURCE_CAPACITY		500000
@@ -1207,6 +1205,17 @@ namespace DX12_Internal
 		}
 	};
 
+	struct SwapChain_DX12
+	{
+		Microsoft::WRL::ComPtr<IDXGISwapChain3> swapChain;
+		Microsoft::WRL::ComPtr<ID3D12Resource> backBuffers[BACKBUFFER_COUNT];
+		D3D12_CPU_DESCRIPTOR_HANDLE backbufferRTV[BACKBUFFER_COUNT] = {};
+
+		~SwapChain_DX12()
+		{
+		}
+	};
+
 	struct Resource_DX12
 	{
 		std::shared_ptr<GraphicsDevice_DX12::AllocationHandler> allocationhandler;
@@ -1408,6 +1417,10 @@ namespace DX12_Internal
 		D3D12_RENDER_PASS_ENDING_ACCESS_RESOLVE_SUBRESOURCE_PARAMETERS resolve_subresources[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
 	};
 
+	SwapChain_DX12* to_internal(const SwapChain* swapChain)
+	{
+		return static_cast<SwapChain_DX12*>(swapChain->internal_state.get());
+	}
 	Resource_DX12* to_internal(const GPUResource* param)
 	{
 		return static_cast<Resource_DX12*>(param->internal_state.get());
@@ -1936,7 +1949,8 @@ using namespace DX12_Internal;
 				if (active_renderpass[cmd] == &dummyRenderpass)
 				{
 					formats.NumRenderTargets = 1;
-					formats.RTFormats[0] = _ConvertFormat(BACKBUFFER_FORMAT);
+					SwapChainDesc d;
+					formats.RTFormats[0] = _ConvertFormat(d.BACKBUFFER_FORMAT);
 				}
 				else
 				{
@@ -2170,35 +2184,20 @@ using namespace DX12_Internal;
 
 
 	// Engine functions
-	GraphicsDevice_DX12::GraphicsDevice_DX12(wiPlatform::window_type window, bool fullscreen, bool debuglayer)
+	GraphicsDevice_DX12::GraphicsDevice_DX12(bool debuglayer, bool gpuValidation)
 	{
 		capabilities |= GRAPHICSDEVICE_CAPABILITY_BINDLESS_DESCRIPTORS;
 		SHADER_IDENTIFIER_SIZE = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
 		TOPLEVEL_ACCELERATION_STRUCTURE_INSTANCE_SIZE = sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
 
 		DEBUGDEVICE = debuglayer;
-		FULLSCREEN = fullscreen;
-
-#ifndef PLATFORM_UWP
-		dpi = GetDpiForWindow(window);
-		RECT rect;
-		GetClientRect(window, &rect);
-		RESOLUTIONWIDTH = rect.right - rect.left;
-		RESOLUTIONHEIGHT = rect.bottom - rect.top;
-#else PLATFORM_UWP
-		dpi = (int)winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi();
-		float dpiscale = GetDPIScaling();
-		RESOLUTIONWIDTH = int(window.Bounds().Width * dpiscale);
-		RESOLUTIONHEIGHT = int(window.Bounds().Height * dpiscale);
-#endif
-
 
 #ifdef PLATFORM_UWP
 		HMODULE dxcompiler = LoadPackagedLibrary(L"dxcompiler.dll", 0);
 #else
-		HMODULE dxgi = LoadLibraryEx(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-		HMODULE dx12 = LoadLibraryEx(L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-		HMODULE dxcompiler = LoadLibrary(L"dxcompiler.dll");
+		HMODULE dxgi = LoadLibraryExW(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+		HMODULE dx12 = LoadLibraryExW(L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+		HMODULE dxcompiler = LoadLibraryW(L"dxcompiler.dll");
 
 		CreateDXGIFactory2 = (PFN_CREATE_DXGI_FACTORY_2)GetProcAddress(dxgi, "CreateDXGIFactory2");
 		assert(CreateDXGIFactory2 != nullptr);
@@ -2229,7 +2228,7 @@ using namespace DX12_Internal;
 				if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&d3dDebug))))
 				{
 					d3dDebug->EnableDebugLayer();
-					if (wiStartupArguments::HasArgument("gpuvalidation"))
+					if (gpuValidation)
 					{
 						d3dDebug->SetEnableGPUBasedValidation(TRUE);
 					}
@@ -2326,49 +2325,6 @@ using namespace DX12_Internal;
 		assert(SUCCEEDED(hr));
 		frameFenceEvent = CreateEventEx(NULL, FALSE, FALSE, EVENT_ALL_ACCESS);
 
-
-		// Create swapchain
-		ComPtr<IDXGISwapChain1> _swapChain;
-
-		DXGI_SWAP_CHAIN_DESC1 sd = {};
-		sd.Width = RESOLUTIONWIDTH;
-		sd.Height = RESOLUTIONHEIGHT;
-		sd.Format = _ConvertFormat(GetBackBufferFormat());
-		sd.Stereo = false;
-		sd.SampleDesc.Count = 1;
-		sd.SampleDesc.Quality = 0;
-		sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-		sd.BufferCount = BACKBUFFER_COUNT;
-		sd.Flags = 0;
-		sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-		sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-
-#ifndef PLATFORM_UWP
-		sd.Scaling = DXGI_SCALING_STRETCH;
-
-		DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc;
-		fullscreenDesc.RefreshRate.Numerator = 60;
-		fullscreenDesc.RefreshRate.Denominator = 1;
-		fullscreenDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED; // needs to be unspecified for correct fullscreen scaling!
-		fullscreenDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE;
-		fullscreenDesc.Windowed = !fullscreen;
-		hr = factory->CreateSwapChainForHwnd(directQueue.Get(), window, &sd, &fullscreenDesc, nullptr, &_swapChain);
-#else
-		sd.Scaling = DXGI_SCALING_ASPECT_RATIO_STRETCH;
-
-		hr = factory->CreateSwapChainForCoreWindow(directQueue.Get(), static_cast<IUnknown*>(winrt::get_abi(window)), &sd, nullptr, &_swapChain);
-#endif
-
-		if (FAILED(hr))
-		{
-			wiHelper::messageBox("Failed to create a swapchain for the graphics device!", "Error!");
-			assert(0);
-			wiPlatform::Exit();
-		}
-
-		hr = _swapChain.As(&swapChain);
-		assert(SUCCEEDED(hr));
-
 		rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		dsv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 		resource_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -2416,13 +2372,6 @@ using namespace DX12_Internal;
 			{
 				allocationhandler->free_bindless_sam.push_back(BINDLESS_SAMPLER_CAPACITY - i - 1);
 			}
-		}
-
-		// Create frame-resident resources:
-		for (uint32_t fr = 0; fr < BACKBUFFER_COUNT; ++fr)
-		{
-			hr = swapChain->GetBuffer(fr, IID_PPV_ARGS(&backBuffers[fr]));
-			assert(SUCCEEDED(hr));
 		}
 
 		copyAllocator.Create(device);
@@ -2495,8 +2444,7 @@ using namespace DX12_Internal;
 		hr = device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &features_rootsignature, sizeof(features_rootsignature));
 		if (features_rootsignature.HighestVersion < D3D_ROOT_SIGNATURE_VERSION_1_1)
 		{
-			wiBackLog::post("DX12: Root signature version 1.1 not supported!");
-			assert(0);
+			assert(0); // "DX12: Root signature version 1.1 not supported!"
 		}
 
 		// Create common indirect command signatures:
@@ -2546,12 +2494,6 @@ using namespace DX12_Internal;
 		allocationhandler->descriptors_sam.init(this, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 		allocationhandler->descriptors_rtv.init(this, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		allocationhandler->descriptors_dsv.init(this, D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-
-		for (int i = 0; i < arraysize(backBuffers); ++i)
-		{
-			backbufferRTV[i] = allocationhandler->descriptors_rtv.allocate();
-			device->CreateRenderTargetView(backBuffers[i].Get(), nullptr, backbufferRTV[i]);
-		}
 
 		{
 			D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_desc = {};
@@ -2684,7 +2626,6 @@ using namespace DX12_Internal;
 			device->CreateUnorderedAccessView(nullptr, nullptr, &uav_desc, nullUAV_texture3d);
 		}
 
-		wiBackLog::post("Created GraphicsDevice_DX12");
 	}
 	GraphicsDevice_DX12::~GraphicsDevice_DX12()
 	{
@@ -2694,48 +2635,100 @@ using namespace DX12_Internal;
 		CloseHandle(directFenceEvent);
 	}
 
-	void GraphicsDevice_DX12::SetResolution(int width, int height)
+	bool GraphicsDevice_DX12::CreateSwapChain(const SwapChainDesc* pDesc, SwapChain* pSwapChain) const
 	{
-		if ((width != RESOLUTIONWIDTH || height != RESOLUTIONHEIGHT) && width > 0 && height > 0)
+		// Create swapchain
+		ComPtr<IDXGISwapChain1> _swapChain;
+
+		DXGI_SWAP_CHAIN_DESC1 sd = {};
+		sd.Width = pDesc->RESOLUTIONWIDTH;
+		sd.Height = pDesc->RESOLUTIONHEIGHT;
+		sd.Format = _ConvertFormat(pDesc->BACKBUFFER_FORMAT);
+		sd.Stereo = false;
+		sd.SampleDesc.Count = 1; // Don't use multi-sampling.
+		sd.SampleDesc.Quality = 0;
+		sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+		sd.BufferCount = BACKBUFFER_COUNT;
+		sd.Flags = 0;
+		sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+
+#ifndef PLATFORM_UWP
+		sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+		sd.Scaling = DXGI_SCALING_STRETCH;
+
+		DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc;
+		fullscreenDesc.RefreshRate.Numerator = 60;
+		fullscreenDesc.RefreshRate.Denominator = 1;
+		fullscreenDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED; // needs to be unspecified for correct fullscreen scaling!
+		fullscreenDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE;
+		fullscreenDesc.Windowed = !pDesc->FULLSCREEN;
+		auto hr = factory->CreateSwapChainForHwnd(directQueue.Get(), pDesc->WINDOW, &sd, &fullscreenDesc, nullptr, &_swapChain);
+#else
+		sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // All Windows Store apps must use this SwapEffect.
+		sd.Scaling = DXGI_SCALING_ASPECT_RATIO_STRETCH;
+
+		hr = factory->CreateSwapChainForCoreWindow(directQueue.Get(), reinterpret_cast<IUnknown*>(window.Get()), &sd, nullptr, &_swapChain);
+#endif
+
+		if (FAILED(hr))
 		{
-			RESOLUTIONWIDTH = width;
-			RESOLUTIONHEIGHT = height;
+			wiHelper::messageBox("Failed to create a swapchain for the graphics device!", "Error!");
+			assert(0);
+			wiPlatform::Exit();
+		}
+
+		pSwapChain->desc = *pDesc;
+		pSwapChain->internal_state = std::make_shared<SwapChain_DX12>();
+		auto intern = to_internal(pSwapChain);
+
+		hr = _swapChain.As(&intern->swapChain);
+		assert(SUCCEEDED(hr));
+
+		// Create frame-resident resources:
+		for (uint32_t fr = 0; fr < BACKBUFFER_COUNT; ++fr)
+		{
+			hr = intern->swapChain->GetBuffer(fr, IID_PPV_ARGS(&intern->backBuffers[fr]));
+			assert(SUCCEEDED(hr));
+		}
+
+		for (int i = 0; i < arraysize(intern->backBuffers); ++i)
+		{
+			intern->backbufferRTV[i] = allocationhandler->descriptors_rtv.allocate();
+			device->CreateRenderTargetView(intern->backBuffers[i].Get(), nullptr, intern->backbufferRTV[i]);
+		}
+
+		return true;
+	}
+
+	void GraphicsDevice_DX12::SetResolution(SwapChain* pSwapChain, int width, int height)
+	{
+		auto intern = to_internal(pSwapChain);
+
+		auto& desc = pSwapChain->desc;
+		if ((width != desc.RESOLUTIONWIDTH || height != desc.RESOLUTIONHEIGHT) && width > 0 && height > 0)
+		{
+			desc.RESOLUTIONWIDTH = width;
+			desc.RESOLUTIONHEIGHT = height;
 
 			WaitForGPU();
 
-			for (int i = 0; i < arraysize(backBuffers); ++i)
+			for (int i = 0; i < arraysize(intern->backBuffers); ++i)
 			{
-				backBuffers[i].Reset();
+				intern->backBuffers[i].Reset();
 			}
 
-			HRESULT hr = swapChain->ResizeBuffers(GetBackBufferCount(), width, height, _ConvertFormat(GetBackBufferFormat()), 0);
+			HRESULT hr = intern->swapChain->ResizeBuffers(GetBackBufferCount(), width, height, _ConvertFormat(desc.GetBackBufferFormat()), 0);
 			assert(SUCCEEDED(hr));
 			
-			for (int i = 0; i < arraysize(backBuffers); ++i)
+			for (int i = 0; i < arraysize(intern->backBuffers); ++i)
 			{
 				uint32_t fr = (GetFrameCount() + i) % BACKBUFFER_COUNT;
-				hr = swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[fr]));
+				hr = intern->swapChain->GetBuffer(i, IID_PPV_ARGS(&intern->backBuffers[fr]));
 				assert(SUCCEEDED(hr));
 
-				device->CreateRenderTargetView(backBuffers[fr].Get(), nullptr, backbufferRTV[fr]);
+				device->CreateRenderTargetView(intern->backBuffers[fr].Get(), nullptr, intern->backbufferRTV[fr]);
 			}
 		}
-	}
-
-	Texture GraphicsDevice_DX12::GetBackBuffer()
-	{
-		auto internal_state = std::make_shared<Texture_DX12>();
-		internal_state->allocationhandler = allocationhandler;
-		internal_state->resource = backBuffers[backbuffer_index];
-
-		D3D12_RESOURCE_DESC desc = internal_state->resource->GetDesc();
-		device->GetCopyableFootprints(&desc, 0, 1, 0, &internal_state->footprint, nullptr, nullptr, nullptr);
-
-		Texture result;
-		result.type = GPUResource::GPU_RESOURCE_TYPE::TEXTURE;
-		result.internal_state = internal_state;
-		result.desc = _ConvertTextureDesc_Inv(desc);
-		return result;
 	}
 
 	bool GraphicsDevice_DX12::CreateBuffer(const GPUBufferDesc* pDesc, const SubresourceData* pInitialData, GPUBuffer* pBuffer) const
@@ -5238,11 +5231,13 @@ using namespace DX12_Internal;
 		}
 	}
 
-	void GraphicsDevice_DX12::PresentBegin(CommandList cmd)
+	void GraphicsDevice_DX12::PresentBegin(SwapChain* pSwapChain, CommandList cmd)
 	{
+		auto intern = to_internal(pSwapChain);		
+
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = backBuffers[backbuffer_index].Get();
+		barrier.Transition.pResource = intern->backBuffers[intern->swapChain->GetCurrentBackBufferIndex()].Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -5254,7 +5249,7 @@ using namespace DX12_Internal;
 		const float clearcolor[] = { 0,0,0,1 };
 
 		D3D12_RENDER_PASS_RENDER_TARGET_DESC RTV = {};
-		RTV.cpuDescriptor = backbufferRTV[backbuffer_index];
+		RTV.cpuDescriptor = intern->backbufferRTV[intern->swapChain->GetCurrentBackBufferIndex()];
 		RTV.BeginningAccess.Type = D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR;
 		RTV.BeginningAccess.Clear.ClearValue.Color[0] = clearcolor[0];
 		RTV.BeginningAccess.Clear.ClearValue.Color[1] = clearcolor[1];
@@ -5265,26 +5260,41 @@ using namespace DX12_Internal;
 
 		active_renderpass[cmd] = &dummyRenderpass;
 	}
-	void GraphicsDevice_DX12::PresentEnd(CommandList cmd)
+	void GraphicsDevice_DX12::PresentEnd(SwapChain* pSwapChain, CommandList cmd)
 	{
 		GetDirectCommandList(cmd)->EndRenderPass();
 
 		active_renderpass[cmd] = nullptr;
 
+		auto intern = to_internal(pSwapChain);
+
 		// Indicate that the back buffer will now be used to present.
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = backBuffers[backbuffer_index].Get();
+		barrier.Transition.pResource = intern->backBuffers[intern->swapChain->GetCurrentBackBufferIndex()].Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		frame_barriers[cmd].push_back(barrier);
 
+		pending_presents_mutex.lock();
+		pending_presents.push_back(pSwapChain);
+		pending_presents_mutex.unlock();
+	}
+
+	void GraphicsDevice_DX12::EndFrame()
+	{
 		SubmitCommandLists();
 
-		HRESULT hr = swapChain->Present(VSYNC, 0);
-		assert(SUCCEEDED(hr));
+		for (auto swap : pending_presents)
+		{
+			auto intern = to_internal(swap);
+			HRESULT hr = intern->swapChain->Present(swap->desc.VSYNC, 0);
+			assert(SUCCEEDED(hr));
+		}
+		pending_presents.clear();
+
 		backbuffer_index = (backbuffer_index + 1) % BACKBUFFER_COUNT;
 
 #if 0
@@ -5337,15 +5347,6 @@ using namespace DX12_Internal;
 			GetFrameResources().resourceBuffer[cmd].clear();
 		}
 
-		D3D12_VIEWPORT vp = {};
-		vp.Width = (float)RESOLUTIONWIDTH;
-		vp.Height = (float)RESOLUTIONHEIGHT;
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		vp.TopLeftX = 0;
-		vp.TopLeftY = 0;
-		GetDirectCommandList(cmd)->RSSetViewports(1, &vp);
-
 		D3D12_RECT pRects[8];
 		for (uint32_t i = 0; i < 8; ++i)
 		{
@@ -5355,6 +5356,15 @@ using namespace DX12_Internal;
 			pRects[i].top = INT32_MIN;
 		}
 		GetDirectCommandList(cmd)->RSSetScissorRects(8, pRects);
+
+		D3D12_VIEWPORT vp = {};
+		vp.Width = (float)GetResolutionWidth();
+		vp.Height = (float)GetResolutionHeight();
+		vp.MinDepth = 0.0f;
+		vp.MaxDepth = 1.0f;
+		vp.TopLeftX = 0;
+		vp.TopLeftY = 0;
+		GetDirectCommandList(cmd)->RSSetViewports(1, &vp);
 
 		prev_pt[cmd] = PRIMITIVETOPOLOGY::UNDEFINED;
 		prev_pipeline_hash[cmd] = 0;
@@ -5451,7 +5461,6 @@ using namespace DX12_Internal;
 		}
 
 		allocationhandler->Update(FRAMECOUNT, BACKBUFFER_COUNT);
-
 	}
 	void GraphicsDevice_DX12::StashCommandLists()
 	{

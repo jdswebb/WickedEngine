@@ -90,15 +90,6 @@ namespace wiHelper
 		{
 			filename = directory + "/sc_" + getCurrentDateTimeAsString() + ".jpg";
 		}
-
-		bool result = saveTextureToFile(wiRenderer::GetDevice()->GetBackBuffer(), filename);
-		assert(result);
-
-		if (result)
-		{
-			std::string msg = "Screenshot saved: " + filename;
-			wiBackLog::post(msg.c_str());
-		}
 	}
 
 	bool saveTextureToMemory(const wiGraphics::Texture& texture, std::vector<uint8_t>& texturedata)

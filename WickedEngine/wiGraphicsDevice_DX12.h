@@ -38,7 +38,6 @@ namespace wiGraphics
 		HANDLE frameFenceEvent;
 
 		uint32_t backbuffer_index = 0;
-		Microsoft::WRL::ComPtr<ID3D12Resource> backBuffers[BACKBUFFER_COUNT];
 
 		Microsoft::WRL::ComPtr<ID3D12CommandSignature> dispatchIndirectCommandSignature;
 		Microsoft::WRL::ComPtr<ID3D12CommandSignature> drawInstancedIndirectCommandSignature;
@@ -54,8 +53,6 @@ namespace wiGraphics
 		uint32_t dsv_descriptor_size = 0;
 		uint32_t resource_descriptor_size = 0;
 		uint32_t sampler_descriptor_size = 0;
-
-		D3D12_CPU_DESCRIPTOR_HANDLE backbufferRTV[BACKBUFFER_COUNT] = {};
 
 		D3D12_CPU_DESCRIPTOR_HANDLE nullCBV = {};
 		D3D12_CPU_DESCRIPTOR_HANDLE nullSAM = {};
@@ -186,6 +183,8 @@ namespace wiGraphics
 		};
 		mutable CopyAllocator copyAllocator;
 
+		std::vector<SwapChain*> pending_presents;
+		std::mutex pending_presents_mutex;
 		Microsoft::WRL::ComPtr<ID3D12Fence> directFence;
 		HANDLE directFenceEvent;
 		UINT64 directFenceValue = 0;
@@ -248,8 +247,6 @@ namespace wiGraphics
 		};
 		DescriptorBinder descriptors[COMMANDLIST_COUNT];
 
-		Microsoft::WRL::ComPtr<IDXGISwapChain3> swapChain;
-
 		std::vector<D3D12_RESOURCE_BARRIER> frame_barriers[COMMANDLIST_COUNT];
 
 		PRIMITIVETOPOLOGY prev_pt[COMMANDLIST_COUNT] = {};
@@ -295,10 +292,11 @@ namespace wiGraphics
 		bool stashed[COMMANDLIST_COUNT] = {};
 
 	public:
-		GraphicsDevice_DX12(wiPlatform::window_type window, bool fullscreen = false, bool debuglayer = false);
+		GraphicsDevice_DX12(bool debuglayer = false, bool gpuValidation = false);
 		virtual ~GraphicsDevice_DX12();
 
-		bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const override;
+		bool CreateSwapChain(const SwapChainDesc* pDesc, SwapChain* pSwapChain) const override;
+        bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const override;
 		bool CreateTexture(const TextureDesc* pDesc, const SubresourceData *pInitialData, Texture *pTexture) const override;
 		bool CreateShader(SHADERSTAGE stage, const void *pShaderBytecode, size_t BytecodeLength, Shader *pShader) const override;
 		bool CreateSampler(const SamplerDesc *pSamplerDesc, Sampler *pSamplerState) const override;
@@ -326,8 +324,9 @@ namespace wiGraphics
 
 		void SetName(GPUResource* pResource, const char* name) override;
 
-		void PresentBegin(CommandList cmd) override;
-		void PresentEnd(CommandList cmd) override;
+		void PresentBegin(SwapChain* pSwapChain, CommandList cmd) override;
+		void PresentEnd(SwapChain* pSwapChain, CommandList cmd) override;
+		void EndFrame() override;
 
 		CommandList BeginCommandList() override;
 		void SubmitCommandLists() override;
@@ -336,9 +335,8 @@ namespace wiGraphics
 		void WaitForGPU() override;
 		void ClearPipelineStateCache() override;
 
-		void SetResolution(int width, int height) override;
-
-		Texture GetBackBuffer() override;
+		void SetResolution(SwapChain* pSwapChain, int width, int height) override;
+		void SetVSyncEnabled(SwapChain* pSwapChain, bool value) override { pSwapChain->desc.VSYNC = value; };
 
 		///////////////Thread-sensitive////////////////////////
 

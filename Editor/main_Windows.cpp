@@ -70,6 +70,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		}
 	}
 
+	wiRenderer::GetDevice()->WaitForGPU();
     return (int) msg.wParam;
 }
 
@@ -163,6 +164,12 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    ShowWindow(hWnd, nCmdShow);
    UpdateWindow(hWnd);
+
+   hWnd = CreateWindow(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
+	   0, 0, 500, 500, NULL, NULL, hInstance, NULL);
+   ShowWindow(hWnd, nCmdShow);
+   UpdateWindow(hWnd);
+   editor.SetWindow2(hWnd);
 
    RegisterHotKey(hWnd, PRINTSCREEN, 0, VK_SNAPSHOT);
 

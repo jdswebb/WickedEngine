@@ -12,7 +12,7 @@ void RenderPath3D::ResizeBuffers()
 {
 	GraphicsDevice* device = wiRenderer::GetDevice();
 
-	FORMAT defaultTextureFormat = device->GetBackBufferFormat();
+	FORMAT defaultTextureFormat = wiRenderer::GetSwapChain()->GetDesc().BACKBUFFER_FORMAT;
 	XMUINT2 internalResolution = GetInternalResolution();
 
 	camera->CreatePerspective((float)internalResolution.x, (float)internalResolution.y, camera->zNearP, camera->zFarP);

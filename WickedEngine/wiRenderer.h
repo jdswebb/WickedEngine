@@ -47,8 +47,12 @@ namespace wiRenderer
 
 	// Set the main graphics device globally:
 	void SetDevice(std::shared_ptr<wiGraphics::GraphicsDevice> newDevice);
+	void SetSwapChain(wiGraphics::SwapChain swapChain);
+	void SetSwapChain2(wiGraphics::SwapChain swapChain);
 	// Retrieve the main graphics device:
 	wiGraphics::GraphicsDevice* GetDevice();
+	wiGraphics::SwapChain* GetSwapChain();
+	wiGraphics::SwapChain* GetSwapChain2();
 
 	// Returns the shader loading directory
 	const std::string& GetShaderPath();

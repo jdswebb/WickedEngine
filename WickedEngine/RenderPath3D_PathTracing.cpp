@@ -18,7 +18,7 @@ void RenderPath3D_PathTracing::ResizeBuffers()
 
 	GraphicsDevice* device = wiRenderer::GetDevice();
 
-	FORMAT defaultTextureFormat = device->GetBackBufferFormat();
+	FORMAT defaultTextureFormat = wiRenderer::GetSwapChain()->GetDesc().BACKBUFFER_FORMAT;
 
 	{
 		TextureDesc desc;

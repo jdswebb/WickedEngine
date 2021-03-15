@@ -116,7 +116,7 @@ void Editor::Initialize()
 	infoDisplay.resolution = true;
 	infoDisplay.heap_allocation_counter = true;
 
-	wiRenderer::GetDevice()->SetVSyncEnabled(true);
+	wiRenderer::GetDevice()->SetVSyncEnabled(false);
 	wiRenderer::SetOcclusionCullingEnabled(true);
 
 	loader.Load();

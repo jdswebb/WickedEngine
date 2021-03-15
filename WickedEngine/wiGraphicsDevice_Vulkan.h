@@ -35,7 +35,6 @@ namespace wiGraphics
 	protected:
 		VkInstance instance = VK_NULL_HANDLE;
 	    VkDebugUtilsMessengerEXT debugUtilsMessenger = VK_NULL_HANDLE;
-		VkSurfaceKHR surface = VK_NULL_HANDLE;
 		VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 		VkDevice device = VK_NULL_HANDLE;
 		int graphicsFamily = -1;
@@ -68,22 +67,10 @@ namespace wiGraphics
 		VkPhysicalDeviceFragmentShadingRateFeaturesKHR fragment_shading_rate_features = {};
 		VkPhysicalDeviceMeshShaderFeaturesNV mesh_shader_features = {};
 
-		VkSurfaceCapabilitiesKHR swapchain_capabilities;
-		std::vector<VkSurfaceFormatKHR> swapchain_formats;
-		std::vector<VkPresentModeKHR> swapchain_presentModes;
-
-		VkSwapchainKHR swapChain = VK_NULL_HANDLE;
-		VkFormat swapChainImageFormat;
-		VkExtent2D swapChainExtent;
-		uint32_t swapChainImageIndex = 0;
-		std::vector<VkImage> swapChainImages;
-		std::vector<VkImageView> swapChainImageViews;
-		std::vector<VkFramebuffer> swapChainFramebuffers;
-
 		std::vector<VkDynamicState> pso_dynamicStates;
 		VkPipelineDynamicStateCreateInfo dynamicStateInfo = {};
 
-		VkRenderPass defaultRenderPass = VK_NULL_HANDLE;
+		mutable VkRenderPass defaultRenderPass = VK_NULL_HANDLE;
 
 		VkBuffer		nullBuffer = VK_NULL_HANDLE;
 		VmaAllocation	nullBufferAllocation = VK_NULL_HANDLE;
@@ -103,7 +90,7 @@ namespace wiGraphics
 		VkImageView		nullImageViewCubeArray = VK_NULL_HANDLE;
 		VkImageView		nullImageView3D = VK_NULL_HANDLE;
 
-		void CreateBackBufferResources();
+		void CreateBackBufferResources(SwapChain* swap) const;
 
 		struct FrameResources
 		{
@@ -117,9 +104,6 @@ namespace wiGraphics
 			VkCommandPool transitionCommandPool = VK_NULL_HANDLE;
 			VkCommandBuffer transitionCommandBuffer = VK_NULL_HANDLE;
 			mutable std::vector<VkImageMemoryBarrier> loadedimagetransitions;
-
-			VkSemaphore swapchainAcquireSemaphore = VK_NULL_HANDLE;
-			VkSemaphore swapchainReleaseSemaphore = VK_NULL_HANDLE;
 
 			struct DescriptorBinder
 			{
@@ -197,6 +181,9 @@ namespace wiGraphics
 		uint32_t vb_strides[COMMANDLIST_COUNT][8] = {};
 		size_t vb_hash[COMMANDLIST_COUNT] = {};
 
+		std::vector<SwapChain*> pending_presents;
+		std::mutex pending_presents_mutex;
+
 		struct DeferredPushConstantData
 		{
 			uint8_t data[128];
@@ -217,10 +204,11 @@ namespace wiGraphics
 		std::vector<StaticSampler> common_samplers;
 
 	public:
-		GraphicsDevice_Vulkan(wiPlatform::window_type window, bool fullscreen = false, bool debuglayer = false);
+		GraphicsDevice_Vulkan(bool debuglayer = false);
 		virtual ~GraphicsDevice_Vulkan();
 
-		bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const override;
+		bool CreateSwapChain(const SwapChainDesc* pDesc, SwapChain* pSwapChain) const override;
+        bool CreateBuffer(const GPUBufferDesc *pDesc, const SubresourceData* pInitialData, GPUBuffer *pBuffer) const override;
 		bool CreateTexture(const TextureDesc* pDesc, const SubresourceData *pInitialData, Texture *pTexture) const override;
 		bool CreateShader(SHADERSTAGE stage, const void *pShaderBytecode, size_t BytecodeLength, Shader *pShader) const override;
 		bool CreateSampler(const SamplerDesc *pSamplerDesc, Sampler *pSamplerState) const override;
@@ -229,7 +217,7 @@ namespace wiGraphics
 		bool CreateRenderPass(const RenderPassDesc* pDesc, RenderPass* renderpass) const override;
 		bool CreateRaytracingAccelerationStructure(const RaytracingAccelerationStructureDesc* pDesc, RaytracingAccelerationStructure* bvh) const override;
 		bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* pDesc, RaytracingPipelineState* rtpso) const override;
-		
+
 		int CreateSubresource(Texture* texture, SUBRESOURCE_TYPE type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount) const override;
 		int CreateSubresource(GPUBuffer* buffer, SUBRESOURCE_TYPE type, uint64_t offset, uint64_t size = ~0) const override;
 
@@ -248,8 +236,9 @@ namespace wiGraphics
 
 		void SetName(GPUResource* pResource, const char* name) override;
 
-		void PresentBegin(CommandList cmd) override;
-		void PresentEnd(CommandList cmd) override;
+		void PresentBegin(SwapChain* pSwapChain, CommandList cmd) override;
+		void PresentEnd(SwapChain* pSwapChain, CommandList cmd) override;
+		void EndFrame() override;
 
 		CommandList BeginCommandList() override;
 		void SubmitCommandLists() override;
@@ -258,11 +247,8 @@ namespace wiGraphics
 		void WaitForGPU() override;
 		void ClearPipelineStateCache() override;
 
-		void SetResolution(int width, int height) override;
-
-		Texture GetBackBuffer() override;
-
-		void SetVSyncEnabled(bool value) override { VSYNC = value; CreateBackBufferResources(); };
+		void SetResolution(SwapChain* pSwapChain, int width, int height) override;
+		void SetVSyncEnabled(SwapChain* pSwapChain, bool value) override { pSwapChain->desc.VSYNC = value; CreateBackBufferResources(pSwapChain); };
 
 		///////////////Thread-sensitive////////////////////////
 
@@ -768,7 +754,6 @@ namespace wiGraphics
 			}
 		};
 		std::shared_ptr<AllocationHandler> allocationhandler;
-
 	};
 }
 

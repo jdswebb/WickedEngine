@@ -43,6 +43,8 @@ namespace wiRenderer
 {
 
 std::shared_ptr<GraphicsDevice> device;
+SwapChain swapchain;
+SwapChain swapchain2;
 
 Shader				shaders[SHADERTYPE_COUNT];
 Texture				textures[TEXTYPE_COUNT];
@@ -286,9 +288,30 @@ void SetDevice(std::shared_ptr<GraphicsDevice> newDevice)
 	sam.slot = SSLOT_ANISO_MIRROR;
 	device->SetCommonSampler(&sam);
 }
+
+void SetSwapChain(wiGraphics::SwapChain swapChain)
+{
+	swapchain = swapChain;
+}
+
+void SetSwapChain2(wiGraphics::SwapChain swapChain)
+{
+	swapchain2 = swapChain;
+}
+
 GraphicsDevice* GetDevice()
 {
 	return device.get();
+}
+
+wiGraphics::SwapChain* GetSwapChain()
+{
+	return &swapchain;
+}
+
+wiGraphics::SwapChain* GetSwapChain2()
+{
+	return &swapchain2;
 }
 
 // Direct reference to a renderable instance:

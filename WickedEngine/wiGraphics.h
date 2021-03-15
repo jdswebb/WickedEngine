@@ -1,5 +1,6 @@
 #pragma once
 #include "CommonInclude.h"
+#include "wiPlatform.h"
 
 #include <memory>
 #include <vector>
@@ -478,6 +479,24 @@ namespace wiGraphics
 		uint32_t StructureByteStride = 0; // needed for typed and structured buffer types!
 		FORMAT Format = FORMAT_UNKNOWN; // only needed for typed buffer!
 	};
+	struct SwapChainDesc
+	{
+		bool VSYNC = true;
+		int RESOLUTIONWIDTH = 0;
+		int RESOLUTIONHEIGHT = 0;
+		bool FULLSCREEN = false;
+		FORMAT BACKBUFFER_FORMAT = FORMAT_R10G10B10A2_UNORM;
+		wiPlatform::window_type WINDOW;
+
+		inline bool GetVSyncEnabled() const { return VSYNC; }
+		virtual void SetVSyncEnabled(bool value) { VSYNC = value; }
+		// Returns native resolution width of back buffer in pixels:
+		inline int GetResolutionWidth() const { return RESOLUTIONWIDTH; }
+		// Returns native resolution height of back buffer in pixels:
+		inline int GetResolutionHeight() const { return RESOLUTIONHEIGHT; }
+
+		inline FORMAT GetBackBufferFormat() const { return BACKBUFFER_FORMAT; }
+	};
 	struct GPUQueryHeapDesc
 	{
 		GPU_QUERY_TYPE type = GPU_QUERY_TYPE_TIMESTAMP;
@@ -740,6 +759,7 @@ namespace wiGraphics
 	struct Shader : public GraphicsDeviceChild
 	{
 		SHADERSTAGE stage = SHADERSTAGE_COUNT;
+		std::string entry_point = "main";
 		std::vector<StaticSampler> auto_samplers; // ability to set static samplers without explicit root signature
 	};
 
@@ -769,6 +789,20 @@ namespace wiGraphics
 		TextureDesc	desc;
 
 		const TextureDesc& GetDesc() const { return desc; }
+	};
+
+	struct SwapChain : public GPUResource
+	{
+		SwapChainDesc desc;
+
+		inline bool GetVSyncEnabled() const { return desc.VSYNC; }
+		virtual void SetVSyncEnabled(bool value) { desc.VSYNC = value; }
+		// Returns native resolution width of back buffer in pixels:
+		inline int GetResolutionWidth() const { return desc.RESOLUTIONWIDTH; }
+		// Returns native resolution height of back buffer in pixels:
+		inline int GetResolutionHeight() const { return desc.RESOLUTIONHEIGHT; }
+
+		const SwapChainDesc& GetDesc() const { return desc; }
 	};
 
 	struct GPUQueryHeap : public GraphicsDeviceChild

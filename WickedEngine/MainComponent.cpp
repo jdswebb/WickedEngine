@@ -16,7 +16,6 @@
 #include "wiImage.h"
 #include "wiEvent.h"
 
-#include "wiGraphicsDevice_DX11.h"
 #include "wiGraphicsDevice_DX12.h"
 #include "wiGraphicsDevice_Vulkan.h"
 
@@ -72,9 +71,10 @@ void MainComponent::Run()
 	{
 		// Until engine is not loaded, present initialization screen...
 		CommandList cmd = wiRenderer::GetDevice()->BeginCommandList();
-		wiRenderer::GetDevice()->PresentBegin(cmd);
+		wiRenderer::GetDevice()->PresentBegin(wiRenderer::GetSwapChain(), cmd);
 		wiFont::Draw(wiBackLog::getText(), wiFontParams(4, 4, infoDisplay.size), cmd);
-		wiRenderer::GetDevice()->PresentEnd(cmd);
+		wiRenderer::GetDevice()->PresentEnd(wiRenderer::GetSwapChain(), cmd);
+		wiRenderer::GetDevice()->EndFrame();
 		return;
 	}
 
@@ -142,13 +142,28 @@ void MainComponent::Run()
 		wiInput::Update(); // still flush the input events so they don't just accumulate
 	}
 
+	Viewport vp;
+	vp.Width = (float)wiRenderer::GetSwapChain()->GetResolutionWidth();
+	vp.Height = (float)wiRenderer::GetSwapChain()->GetResolutionHeight();
 	CommandList cmd = wiRenderer::GetDevice()->BeginCommandList();
-	wiRenderer::GetDevice()->PresentBegin(cmd);
+	wiRenderer::GetDevice()->BindViewports(1, &vp, cmd);
+	wiRenderer::GetDevice()->PresentBegin(wiRenderer::GetSwapChain(), cmd);
 	{
 		Compose(cmd);
 		wiProfiler::EndFrame(cmd); // End before Present() so that GPU queries are properly recorded
 	}
-	wiRenderer::GetDevice()->PresentEnd(cmd);
+	wiRenderer::GetDevice()->PresentEnd(wiRenderer::GetSwapChain(), cmd);
+
+	std::stringstream ss;
+	ss << wiRenderer::GetDevice()->GetFrameCount();
+	vp.Width = (float)wiRenderer::GetSwapChain2()->GetResolutionWidth() * 4.0f;
+	vp.Height = (float)wiRenderer::GetSwapChain2()->GetResolutionHeight() * 4.0f;
+	wiRenderer::GetDevice()->BindViewports(1, &vp, cmd);
+	wiRenderer::GetDevice()->PresentBegin(wiRenderer::GetSwapChain2(), cmd);
+	wiFont::Draw(ss.str(), wiFontParams(4, 4, infoDisplay.size), cmd);
+	wiRenderer::GetDevice()->PresentEnd(wiRenderer::GetSwapChain2(), cmd);
+
+	wiRenderer::GetDevice()->EndFrame();
 }
 
 void MainComponent::Update(float dt)
@@ -366,22 +381,47 @@ void MainComponent::SetWindow(wiPlatform::window_type window, bool fullscreen)
 		{
 #ifdef WICKEDENGINE_BUILD_VULKAN
 			wiRenderer::SetShaderPath(wiRenderer::GetShaderPath() + "spirv/");
-			wiRenderer::SetDevice(std::make_shared<GraphicsDevice_Vulkan>(window, fullscreen, debugdevice));
+			wiRenderer::SetDevice(std::make_shared<GraphicsDevice_Vulkan>(debugdevice));
 #endif
 		}
 		else if (use_dx12)
 		{
 #ifdef WICKEDENGINE_BUILD_DX12
 			wiRenderer::SetShaderPath(wiRenderer::GetShaderPath() + "hlsl6/");
-			wiRenderer::SetDevice(std::make_shared<GraphicsDevice_DX12>(window, fullscreen, debugdevice));
+			wiRenderer::SetDevice(std::make_shared<GraphicsDevice_DX12>(debugdevice));
 #endif
 		}
-		else if (use_dx11)
-		{
-#ifdef WICKEDENGINE_BUILD_DX11
-			wiRenderer::SetDevice(std::make_shared<GraphicsDevice_DX11>(window, fullscreen, debugdevice));
-#endif
-		}
+
+		SwapChainDesc swapDesc{};
+#ifdef _WIN32
+		RECT rect;
+		GetClientRect(window, &rect);
+		swapDesc.RESOLUTIONWIDTH = rect.right - rect.left;
+		swapDesc.RESOLUTIONHEIGHT = rect.bottom - rect.top;
+#endif // _WIN32
+		swapDesc.FULLSCREEN = false;
+		swapDesc.VSYNC = false;
+		swapDesc.WINDOW = window;
+		SwapChain swapChain;
+		wiRenderer::GetDevice()->CreateSwapChain(&swapDesc, &swapChain);
+		wiRenderer::SetSwapChain(swapChain);
 	}
+}
+
+void MainComponent::SetWindow2(wiPlatform::window_type window)
+{
+	SwapChainDesc swapDesc{};
+#ifdef _WIN32
+	RECT rect;
+	GetClientRect(window, &rect);
+	swapDesc.RESOLUTIONWIDTH = rect.right - rect.left;
+	swapDesc.RESOLUTIONHEIGHT = rect.bottom - rect.top;
+#endif // _WIN32
+	swapDesc.FULLSCREEN = false;
+	swapDesc.VSYNC = false;
+	swapDesc.WINDOW = window;
+	SwapChain swapChain;
+	wiRenderer::GetDevice()->CreateSwapChain(&swapDesc, &swapChain);
+	wiRenderer::SetSwapChain2(swapChain);
 }
 
