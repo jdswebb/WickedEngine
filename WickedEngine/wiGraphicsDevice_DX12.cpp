@@ -2328,11 +2328,6 @@ using namespace DX12_Internal;
 		assert(SUCCEEDED(hr));
 		frameFenceEvent = CreateEventEx(NULL, FALSE, FALSE, EVENT_ALL_ACCESS);
 
-		hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapChainFence));
-		assert(SUCCEEDED(hr));
-		swapChainFenceEvent = CreateEventEx(NULL, FALSE, FALSE, EVENT_ALL_ACCESS);
-		swapChainFenceValue = swapChainFence->GetCompletedValue();
-
 		rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		dsv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 		resource_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -2639,7 +2634,6 @@ using namespace DX12_Internal;
 	{
 		WaitForGPU();
 
-		CloseHandle(swapChainFenceEvent);
 		CloseHandle(frameFenceEvent);
 		CloseHandle(directFenceEvent);
 	}
@@ -5303,21 +5297,20 @@ using namespace DX12_Internal;
 		for (auto swap : pending_presents)
 		{
 			auto intern = to_internal(swap);
-
-			intern->waitFenceValue[intern->currentBackbufferIndex] = swapChainFenceValue;
+			intern->waitFenceValue[intern->currentBackbufferIndex] = FRAMECOUNT;
 
 			HRESULT hr = intern->swapChain->Present(swap->desc.VSYNC, 0);
 			assert(SUCCEEDED(hr));
 
-			hr = directQueue->Signal(swapChainFence.Get(), swapChainFenceValue);
+			hr = directQueue->Signal(frameFence.Get(), FRAMECOUNT);
 			assert(SUCCEEDED(hr));
-			swapChainFenceValue++;
+			FRAMECOUNT++;
 
 			intern->currentBackbufferIndex = intern->swapChain->GetCurrentBackBufferIndex();
-			if (swapChainFence->GetCompletedValue() < intern->waitFenceValue[intern->currentBackbufferIndex])
+			if (frameFence->GetCompletedValue() < intern->waitFenceValue[intern->currentBackbufferIndex])
 			{
-				hr = swapChainFence->SetEventOnCompletion(intern->waitFenceValue[intern->currentBackbufferIndex], swapChainFenceEvent);
-				const auto waitResult = WaitForSingleObject(swapChainFenceEvent, INFINITE);
+				hr = frameFence->SetEventOnCompletion(intern->waitFenceValue[intern->currentBackbufferIndex], frameFenceEvent);
+				const auto waitResult = WaitForSingleObject(frameFenceEvent, INFINITE);
 				assert(waitResult == 0);
 			}
 		}
