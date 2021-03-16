@@ -37,7 +37,9 @@ namespace wiGraphics
 		Microsoft::WRL::ComPtr<ID3D12Fence> frameFence;
 		HANDLE frameFenceEvent;
 
-		uint32_t backbuffer_index = 0;
+		Microsoft::WRL::ComPtr<ID3D12Fence> swapChainFence;
+		HANDLE swapChainFenceEvent;
+		uint64_t swapChainFenceValue;
 
 		Microsoft::WRL::ComPtr<ID3D12CommandSignature> dispatchIndirectCommandSignature;
 		Microsoft::WRL::ComPtr<ID3D12CommandSignature> drawInstancedIndirectCommandSignature;

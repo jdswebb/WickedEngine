@@ -1207,6 +1207,9 @@ namespace DX12_Internal
 
 	struct SwapChain_DX12
 	{
+		uint64_t waitFenceValue[BACKBUFFER_COUNT];
+
+		uint32_t currentBackbufferIndex;
 		Microsoft::WRL::ComPtr<IDXGISwapChain3> swapChain;
 		Microsoft::WRL::ComPtr<ID3D12Resource> backBuffers[BACKBUFFER_COUNT];
 		D3D12_CPU_DESCRIPTOR_HANDLE backbufferRTV[BACKBUFFER_COUNT] = {};
@@ -2325,6 +2328,11 @@ using namespace DX12_Internal;
 		assert(SUCCEEDED(hr));
 		frameFenceEvent = CreateEventEx(NULL, FALSE, FALSE, EVENT_ALL_ACCESS);
 
+		hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapChainFence));
+		assert(SUCCEEDED(hr));
+		swapChainFenceEvent = CreateEventEx(NULL, FALSE, FALSE, EVENT_ALL_ACCESS);
+		swapChainFenceValue = swapChainFence->GetCompletedValue();
+
 		rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		dsv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 		resource_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -2631,6 +2639,7 @@ using namespace DX12_Internal;
 	{
 		WaitForGPU();
 
+		CloseHandle(swapChainFenceEvent);
 		CloseHandle(frameFenceEvent);
 		CloseHandle(directFenceEvent);
 	}
@@ -2684,6 +2693,8 @@ using namespace DX12_Internal;
 		hr = _swapChain.As(&intern->swapChain);
 		assert(SUCCEEDED(hr));
 
+		intern->currentBackbufferIndex = intern->swapChain->GetCurrentBackBufferIndex();
+
 		// Create frame-resident resources:
 		for (uint32_t fr = 0; fr < BACKBUFFER_COUNT; ++fr)
 		{
@@ -2728,6 +2739,8 @@ using namespace DX12_Internal;
 
 				device->CreateRenderTargetView(intern->backBuffers[fr].Get(), nullptr, intern->backbufferRTV[fr]);
 			}
+
+			intern->currentBackbufferIndex = intern->swapChain->GetCurrentBackBufferIndex();
 		}
 	}
 
@@ -5237,7 +5250,7 @@ using namespace DX12_Internal;
 
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = intern->backBuffers[intern->swapChain->GetCurrentBackBufferIndex()].Get();
+		barrier.Transition.pResource = intern->backBuffers[intern->currentBackbufferIndex].Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -5249,7 +5262,7 @@ using namespace DX12_Internal;
 		const float clearcolor[] = { 0,0,0,1 };
 
 		D3D12_RENDER_PASS_RENDER_TARGET_DESC RTV = {};
-		RTV.cpuDescriptor = intern->backbufferRTV[intern->swapChain->GetCurrentBackBufferIndex()];
+		RTV.cpuDescriptor = intern->backbufferRTV[intern->currentBackbufferIndex];
 		RTV.BeginningAccess.Type = D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR;
 		RTV.BeginningAccess.Clear.ClearValue.Color[0] = clearcolor[0];
 		RTV.BeginningAccess.Clear.ClearValue.Color[1] = clearcolor[1];
@@ -5271,7 +5284,7 @@ using namespace DX12_Internal;
 		// Indicate that the back buffer will now be used to present.
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = intern->backBuffers[intern->swapChain->GetCurrentBackBufferIndex()].Get();
+		barrier.Transition.pResource = intern->backBuffers[intern->currentBackbufferIndex].Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -5290,12 +5303,25 @@ using namespace DX12_Internal;
 		for (auto swap : pending_presents)
 		{
 			auto intern = to_internal(swap);
+
+			intern->waitFenceValue[intern->currentBackbufferIndex] = swapChainFenceValue;
+
 			HRESULT hr = intern->swapChain->Present(swap->desc.VSYNC, 0);
 			assert(SUCCEEDED(hr));
+
+			hr = directQueue->Signal(swapChainFence.Get(), swapChainFenceValue);
+			assert(SUCCEEDED(hr));
+			swapChainFenceValue++;
+
+			intern->currentBackbufferIndex = intern->swapChain->GetCurrentBackBufferIndex();
+			if (swapChainFence->GetCompletedValue() < intern->waitFenceValue[intern->currentBackbufferIndex])
+			{
+				hr = swapChainFence->SetEventOnCompletion(intern->waitFenceValue[intern->currentBackbufferIndex], swapChainFenceEvent);
+				const auto waitResult = WaitForSingleObject(swapChainFenceEvent, INFINITE);
+				assert(waitResult == 0);
+			}
 		}
 		pending_presents.clear();
-
-		backbuffer_index = (backbuffer_index + 1) % BACKBUFFER_COUNT;
 
 #if 0
 		D3D12MA::Stats stats = {};
