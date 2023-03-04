@@ -9,8 +9,22 @@
 #include <deque>
 #include <string>
 #include <thread>
+#include <map>
 #include <mutex>
 #include <condition_variable>
+
+// uncomment to use default Wicked job impl
+#define WICKED_TBB
+// don't use this, the TF API is incompatible to such a degree that it just does not work as a drop-in replacement here
+// #define WICKED_TASKFLOW
+
+#ifdef WICKED_TBB
+#include "tbb/task.h"
+#include "tbb/parallel_for.h"
+#endif
+#ifdef WICKED_TASKFLOW
+#include "taskflow/taskflow.hpp"
+#endif
 
 #ifdef PLATFORM_LINUX
 #include <pthread.h>
@@ -18,6 +32,183 @@
 
 namespace wi::jobsystem
 {
+
+uint32_t DispatchGroupCount(uint32_t jobCount, uint32_t groupSize)
+{
+	// Calculate the amount of job groups to dispatch (overestimate, or "ceil"):
+	return (jobCount + groupSize - 1) / groupSize;
+}
+
+bool IsBusy(const context& ctx)
+{
+	// Whenever the context label is greater than zero, it means that there is still work that needs to be done
+	return ctx.counter.load() > 0;
+}
+
+#ifdef WICKED_TBB
+context::context()
+{
+	storage = new tbb::task_group{};
+}
+
+context::~context()
+{
+	delete (tbb::task_group*)storage;
+}
+
+void Initialize(uint32_t maxThreadCount)
+{
+}
+
+void Wait(const context& ctx)
+{
+	((tbb::task_group*)ctx.storage)->wait();
+}
+
+uint32_t GetThreadCount()
+{
+	return std::thread::hardware_concurrency();
+}
+
+void Execute(context& ctx, const std::function<void(JobArgs)>& task)
+{
+	ctx.counter.fetch_add(1);
+	((tbb::task_group*)ctx.storage)->run([task, &ctx]()
+		{
+			JobArgs args;
+			args.isFirstJobInGroup = true;
+			args.isLastJobInGroup = true;
+			args.groupID = 0;
+			args.groupIndex = 0;
+			args.jobIndex = 0;
+			args.sharedmemory = nullptr;
+			task(args);
+			ctx.counter.fetch_sub(1);
+		});
+}
+
+void Dispatch(context& ctx, uint32_t jobCount, uint32_t groupSize, const std::function<void(JobArgs)>& task, size_t sharedmemory_size)
+{
+	Execute(ctx, [jobCount, groupSize, sharedmemory_size, task](JobArgs) {
+		size_t groupCount = DispatchGroupCount(jobCount, groupSize);
+		tbb::parallel_for(size_t(0), size_t(groupCount), size_t(1), [jobCount, groupSize, sharedmemory_size, task](size_t g)
+			{
+				for (size_t i = 0; i < groupSize; ++i)
+				{
+					JobArgs args;
+					args.jobIndex = (g * groupSize) + i;
+					if (args.jobIndex < jobCount)
+					{
+						args.groupIndex = i;
+						args.groupID = g;
+						args.isLastJobInGroup = (i == (groupSize - 1));
+						args.isFirstJobInGroup = (i == 0);
+						args.sharedmemory = nullptr;
+						if (sharedmemory_size > 0)
+						{
+							thread_local static wi::vector<uint8_t> shared_allocation_data;
+							shared_allocation_data.reserve(sharedmemory_size);
+							args.sharedmemory = shared_allocation_data.data();
+						}
+						task(args);
+					}
+				}
+			}
+		);
+		});
+}
+#elif defined(WICKED_TASKFLOW)
+
+// this is terrible use of the API, actually using TF would require redesign
+tf::Executor g_exec;
+
+context::context()
+{
+	storage = new tf::Taskflow{};
+}
+
+context::~context()
+{
+	delete (tf::Taskflow*)storage;
+}
+
+void Initialize(uint32_t maxThreadCount)
+{
+}
+
+void Wait(const context& ctx)
+{
+	g_exec.run(*((tf::Taskflow*)ctx.storage)).wait();
+}
+
+uint32_t GetThreadCount()
+{
+	return std::thread::hardware_concurrency();
+}
+
+void Execute(context& ctx, const std::function<void(JobArgs)>& task)
+{
+	ctx.counter.fetch_add(1);
+	((tf::Taskflow*)ctx.storage)->emplace([task, &ctx]()
+		{
+			JobArgs args;
+			args.isFirstJobInGroup = true;
+			args.isLastJobInGroup = true;
+			args.groupID = 0;
+			args.groupIndex = 0;
+			args.jobIndex = 0;
+			args.sharedmemory = nullptr;
+			task(args);
+			ctx.counter.fetch_sub(1);
+		});
+}
+
+void Dispatch(context& ctx, uint32_t jobCount, uint32_t groupSize, const std::function<void(JobArgs)>& task, size_t sharedmemory_size)
+{
+	ctx.counter.fetch_add(1);
+	((tf::Taskflow*)ctx.storage)->emplace([task, jobCount, groupSize, sharedmemory_size, &ctx](tf::Subflow& sf)
+		{
+			size_t groupCount = DispatchGroupCount(jobCount, groupSize);
+			sf.for_each_index(0ull, groupCount, 1ull, [jobCount, groupSize, sharedmemory_size, task](size_t g)
+				{
+					for (size_t i = 0; i < groupSize; ++i)
+					{
+						JobArgs args;
+						args.jobIndex = (g * groupSize) + i;
+						if (args.jobIndex < jobCount)
+						{
+							args.groupIndex = i;
+							args.groupID = g;
+							args.isLastJobInGroup = (i == (groupSize - 1));
+							args.isFirstJobInGroup = (i == 0);
+
+							if (sharedmemory_size > 0)
+							{
+								thread_local static wi::vector<uint8_t> shared_allocation_data;
+								shared_allocation_data.reserve(sharedmemory_size);
+								args.sharedmemory = shared_allocation_data.data();
+							}
+							else
+							{
+								args.sharedmemory = nullptr;
+							}
+
+							task(args);
+						}
+					}
+				}
+			);
+		});		
+}
+#else
+	context::context()
+	{
+	}
+
+	context::~context()
+	{
+	}
+
 	struct Job
 	{
 		std::function<void(JobArgs)> task;
@@ -248,18 +439,6 @@ namespace wi::jobsystem
 		internal_state.wakeCondition.notify_all();
 	}
 
-	uint32_t DispatchGroupCount(uint32_t jobCount, uint32_t groupSize)
-	{
-		// Calculate the amount of job groups to dispatch (overestimate, or "ceil"):
-		return (jobCount + groupSize - 1) / groupSize;
-	}
-
-	bool IsBusy(const context& ctx)
-	{
-		// Whenever the context label is greater than zero, it means that there is still work that needs to be done
-		return ctx.counter.load() > 0;
-	}
-
 	void Wait(const context& ctx)
 	{
 		if (IsBusy(ctx))
@@ -280,4 +459,5 @@ namespace wi::jobsystem
 			}
 		}
 	}
+#endif
 }

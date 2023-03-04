@@ -167,7 +167,7 @@ void TestsRenderer::Load()
 	testSelector.OnSelect([=](wi::gui::EventArgs args) {
 
 		// Reset all state that tests might have modified:
-		wi::eventhandler::SetVSync(true);
+		wi::eventhandler::SetVSync(false);
 		wi::renderer::SetToDrawGridHelper(false);
 		wi::renderer::SetTemporalAAEnabled(false);
 		wi::renderer::ClearWorld(wi::scene::GetScene());

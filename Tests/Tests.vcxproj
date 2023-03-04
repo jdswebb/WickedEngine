@@ -76,6 +76,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)BUILD\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb_debug.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb12.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb12_debug.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
@@ -98,6 +99,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)BUILD\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb_debug.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb12.lib;$(SolutionDir)WickedEngine\Utility\tbb\vc14\tbb12_debug.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
