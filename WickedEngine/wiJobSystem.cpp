@@ -14,7 +14,7 @@
 #include <condition_variable>
 
 // uncomment to use default Wicked job impl
-//#define WICKED_TBB
+#define WICKED_TBB
 // don't use this, the TF API is incompatible to such a degree that it just does not work as a drop-in replacement here
 // #define WICKED_TASKFLOW
 
