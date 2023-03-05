@@ -691,6 +691,24 @@ void TestsRenderer::RunJobSystemTest()
 		ss += "wi::jobsystem::Dispatch() took " + std::to_string(time) + " milliseconds\n";
 	}
 
+	// Small job dispatch test:
+	{
+		wi::vector<DirectX::XMFLOAT4X4> dataSet(itemCount);
+		timer.record();
+
+		for (size_t i = 0; i < 256; ++i)
+		{
+			wi::jobsystem::Dispatch(ctx, itemCount, 32, [&](wi::jobsystem::JobArgs args) {
+				XMStoreFloat4x4(&dataSet[args.jobIndex], XMMatrixMultiply(XMLoadFloat4x4(&dataSet[args.jobIndex]),
+					XMLoadFloat4x4(&dataSet[args.jobIndex])));
+				});
+		}
+		wi::jobsystem::Wait(ctx);
+
+		double time = timer.elapsed();
+		ss += "wi::jobsystem::Dispatch() for small jobs took " + std::to_string(time) + " milliseconds\n";
+	}
+
 	static wi::SpriteFont font;
 	font = wi::SpriteFont(ss);
 	font.params.posX = GetLogicalWidth() / 2;

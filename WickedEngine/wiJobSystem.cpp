@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <execution>
 #include <condition_variable>
 
 #ifdef PLATFORM_LINUX
@@ -50,6 +51,54 @@ namespace wi::jobsystem
 			return true;
 		}
 
+	};
+	class RangeIterator
+	{
+	public:
+		using iterator_category = std::random_access_iterator_tag;
+		using value_type = size_t;
+		using difference_type = size_t;
+		using pointer = size_t;
+		using reference = size_t;
+
+		RangeIterator() : value(0) {}
+		RangeIterator(size_t ptr) : value(ptr) {}
+		RangeIterator(const RangeIterator&) = default;
+		RangeIterator& operator=(const RangeIterator&) = default;
+
+		reference operator*() const
+		{
+			return value;
+		}
+
+		RangeIterator& operator++()
+		{
+			++value;
+			return *this;
+		}
+
+		RangeIterator operator+(difference_type n) const
+		{
+			return RangeIterator(value + n);
+		}
+
+		difference_type operator-(const RangeIterator& other) const
+		{
+			return value - other.value;
+		}
+
+		bool operator==(const RangeIterator& other) const
+		{
+			return value == other.value;
+		}
+
+		bool operator!=(const RangeIterator& other) const
+		{
+			return value != other.value;
+		}
+
+	private:
+		size_t value;
 	};
 
 	// This structure is responsible to stop worker thread loops.
@@ -95,17 +144,8 @@ namespace wi::jobsystem
 			{
 				JobArgs args;
 				args.groupID = job.groupID;
-				if (job.sharedmemory_size > 0)
-				{
-					thread_local static wi::vector<uint8_t> shared_allocation_data;
-					shared_allocation_data.reserve(job.sharedmemory_size);
-					args.sharedmemory = shared_allocation_data.data();
-				}
-				else
-				{
-					args.sharedmemory = nullptr;
-				}
-
+				assert(job.sharedmemory_size == 0);
+				
 				for (uint32_t j = job.groupJobOffset; j < job.groupJobEnd; ++j)
 				{
 					args.jobIndex = j;
@@ -225,27 +265,34 @@ namespace wi::jobsystem
 			return;
 		}
 
-		const uint32_t groupCount = DispatchGroupCount(jobCount, groupSize);
-
-		// Context state is updated:
-		ctx.counter.fetch_add(groupCount);
-
-		Job job;
-		job.ctx = &ctx;
-		job.task = task;
-		job.sharedmemory_size = (uint32_t)sharedmemory_size;
-
-		for (uint32_t groupID = 0; groupID < groupCount; ++groupID)
-		{
-			// For each group, generate one real job:
-			job.groupID = groupID;
-			job.groupJobOffset = groupID * groupSize;
-			job.groupJobEnd = std::min(job.groupJobOffset + groupSize, jobCount);
-
-			internal_state.jobQueuePerThread[internal_state.nextQueue.fetch_add(1) % internal_state.numThreads].push_back(job);
-		}
-
-		internal_state.wakeCondition.notify_all();
+		Execute(ctx, [jobCount, groupSize, sharedmemory_size, task](JobArgs) {
+			size_t groupCount = DispatchGroupCount(jobCount, groupSize);
+			RangeIterator begin(0ull);
+			RangeIterator end(groupCount);
+			std::for_each(std::execution::par, begin, end, [jobCount, groupSize, sharedmemory_size, task](size_t g)
+				{
+					for (size_t i = 0; i < groupSize; ++i)
+					{
+						JobArgs args;
+						args.jobIndex = (g * groupSize) + i;
+						if (args.jobIndex < jobCount)
+						{
+							args.groupIndex = i;
+							args.groupID = g;
+							args.isLastJobInGroup = (i == (groupSize - 1)) || (args.jobIndex == (jobCount - 1));
+							args.isFirstJobInGroup = (i == 0);
+							args.sharedmemory = nullptr;
+							if (sharedmemory_size > 0)
+							{
+								thread_local static wi::vector<uint8_t> shared_allocation_data;
+								shared_allocation_data.reserve(sharedmemory_size);
+								args.sharedmemory = shared_allocation_data.data();
+							}
+							task(args);
+						}
+					}
+				});
+			});
 	}
 
 	uint32_t DispatchGroupCount(uint32_t jobCount, uint32_t groupSize)
